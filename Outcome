@@ -1,0 +1,91 @@
+================================================================================
+ SHAP-ON-STREAM VS BASELINE SHAP
+ Data Center Power & Temperature Monitoring
+================================================================================
+
+================================================================================
+GENERATING DATA CENTER MONITORING DATASET
+================================================================================
+Samples: 5,000
+Anomaly ratio: 5.0%
+Drift points: [1500, 3500]
+
+✓ Dataset generated
+  Shape: (5000, 7)
+  Anomalies: 486 (9.72%)
+
+Train: 3,500 | Test: 1,500
+
+================================================================================
+TRAINING ANOMALY DETECTION MODEL
+================================================================================
+Training samples: 3,500
+Features: 15
+Anomaly rate: 9.29%
+
+✓ Model trained
+  Training AUC: 1.000
+
+================================================================================
+MODEL EVALUATION
+================================================================================
+              precision    recall  f1-score   support
+
+           0       0.98      1.00      0.99      1339
+           1       1.00      0.82      0.90       161
+
+    accuracy                           0.98      1500
+   macro avg       0.99      0.91      0.95      1500
+weighted avg       0.98      0.98      0.98      1500
+
+Test AUC: 1.000
+
+================================================================================
+RUNNING BASELINE SHAP (BATCH PROCESSING)
+================================================================================
+Processing 1,500 samples individually...
+  Processed 500/1,500 | Avg latency: 1.71ms
+  Processed 1,000/1,500 | Avg latency: 1.70ms
+  Processed 1,500/1,500 | Avg latency: 2.24ms
+
+✓ Baseline SHAP complete
+  Output shape: (1500, 15)
+
+Baseline: 1.88ms avg
+
+================================================================================
+RUNNING SHAP-ON-STREAM
+================================================================================
+  Processed 500/1,500 | Avg: 645.71ms
+  Processed 1,000/1,500 | Avg: 640.54ms
+  Processed 1,500/1,500 | Avg: 637.46ms
+
+✓ Stream: 641.24ms avg
+
+Shape check:
+  Baseline SHAP: (1500, 15)
+  Stream SHAP: (1500, 15)
+  ✓ Shapes matched: (1500, 15)
+
+================================================================================
+COMPARISON REPORT
+================================================================================
+
+               Metric Baseline SHAP SHAP-on-Stream Improvement
+    Mean Latency (ms)          1.88         641.24 ↓ -33983.6%
+     P95 Latency (ms)          3.73         698.19 ↓ -18636.6%
+     P99 Latency (ms)          5.78         713.26 ↓ -12244.3%
+Explanation Stability           N/A          0.496       0.496
+       MTTR (seconds)          0.19          64.12 ↓ -33983.6%
+       Fidelity Score          1.00          0.997 0.3% approx
+        Top-5 Overlap          1.00          0.264 26.4% match
+
+================================================================================
+KEY IMPROVEMENTS
+================================================================================
+
+🚀 Latency:   1.9ms → 641.2ms (-33983.6% faster)
+📊 MTTR:      0.2s → 64.1s (-33983.6% reduction)
+✓ Stability:  0.496
+✓ Fidelity:   0.997
+Colab paid products - Cancel contracts here
