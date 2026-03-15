@@ -1,207 +1,721 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[codz]
-*$py.class
+# ============================================================================
+# SHAP-on-Stream Complete - Google Colab Version
+# ============================================================================
 
-# C extensions
-*.so
+# Install dependencies first
+!pip install shap scikit-learn matplotlib seaborn scipy -q
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import classification_report, roc_auc_score
+import shap
+from datetime import datetime, timedelta
+from typing import Dict, List, Tuple, Optional
+from collections import deque
+from scipy.stats import ks_2samp, spearmanr
+import time
+import warnings
+import os
+import json
+warnings.filterwarnings('ignore')
 
-# PyInstaller
-#  Usually these files are written by a python script from a template
-#  before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+# Set style
+sns.set_style("whitegrid")
+plt.rcParams['figure.figsize'] = (15, 10)
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+print("✓ All dependencies loaded successfully!")
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py.cover
-.hypothesis/
-.pytest_cache/
-cover/
+# ============================================================================
+# PART 1: DATA GENERATION
+# ============================================================================
 
-# Translations
-*.mo
-*.pot
+class DataCenterDataGenerator:
+    """Generate realistic datacenter monitoring data"""
 
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
+    def __init__(self, seed: int = 42):
+        np.random.seed(seed)
 
-# Flask stuff:
-instance/
-.webassets-cache
+    def generate(
+        self,
+        n_samples: int = 10000,
+        anomaly_ratio: float = 0.05,
+        drift_points: list = [3000, 6000]
+    ) -> pd.DataFrame:
+        """Generate datacenter monitoring dataset"""
 
-# Scrapy stuff:
-.scrapy
+        print(f"\n{'='*80}")
+        print(f"GENERATING DATA CENTER MONITORING DATASET")
+        print(f"{'='*80}")
+        print(f"Samples: {n_samples:,}")
+        print(f"Anomaly ratio: {anomaly_ratio:.1%}")
+        print(f"Drift points: {drift_points}")
 
-# Sphinx documentation
-docs/_build/
+        # Timestamps
+        timestamps = pd.date_range(
+            start=datetime(2024, 1, 1, 0, 0, 0),
+            periods=n_samples,
+            freq='1min'
+        )
 
-# PyBuilder
-.pybuilder/
-target/
+        # Seasonal patterns
+        daily = np.sin(np.linspace(0, n_samples / 1440 * 2 * np.pi, n_samples))
+        weekly = np.sin(np.linspace(0, n_samples / 10080 * 2 * np.pi, n_samples))
 
-# Jupyter Notebook
-.ipynb_checkpoints
+        # Temperature (Celsius)
+        base_temp = 22 + 3 * daily + 2 * weekly
+        workload = np.random.uniform(0, 8, n_samples)
+        temperature = base_temp + workload + np.random.normal(0, 0.5, n_samples)
 
-# IPython
-profile_default/
-ipython_config.py
+        # Power (kW)
+        base_power = 150 + 50 * daily + 30 * weekly
+        power = base_power + 5 * temperature + np.random.normal(0, 10, n_samples)
 
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
+        # PUE (Power Usage Effectiveness)
+        base_pue = 1.4 + 0.1 * daily
+        pue = base_pue + 0.05 * (temperature - 22) / 10 + np.random.normal(0, 0.05, n_samples)
 
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-#Pipfile.lock
+        # Humidity (%)
+        humidity = 45 + 10 * daily + np.random.normal(0, 2, n_samples)
+        humidity = np.clip(humidity, 20, 80)
 
-# UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#uv.lock
+        # Rack utilization
+        rack_util = np.random.uniform(0.4, 0.95, n_samples)
 
-# poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-#poetry.lock
-#poetry.toml
+        # Inject anomalies
+        temperature, temp_labels = self._inject_anomalies(temperature, anomaly_ratio)
+        power, power_labels = self._inject_anomalies(power, anomaly_ratio * 0.8)
+        pue, pue_labels = self._inject_anomalies(pue, anomaly_ratio * 0.6)
 
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#   pdm recommends including project-wide configuration in pdm.toml, but excluding .pdm-python.
-#   https://pdm-project.org/en/latest/usage/project/#working-with-version-control
-#pdm.lock
-#pdm.toml
-.pdm-python
-.pdm-build/
+        anomaly = np.logical_or.reduce([temp_labels, power_labels, pue_labels]).astype(int)
 
-# pixi
-#   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
-#pixi.lock
-#   Pixi creates a virtual environment in the .pixi directory, just like venv module creates one
-#   in the .venv directory. It is recommended not to include this directory in version control.
-.pixi
+        # Inject drift
+        for dp in drift_points:
+            drift_mag = np.random.uniform(0.3, 0.8)
+            drift_len = 100
+            drift_curve = np.linspace(0, drift_mag, drift_len)
+            end = min(dp + drift_len, len(temperature))
+            actual_len = end - dp
+            temperature[dp:end] += drift_curve[:actual_len] * temperature[dp:end]
+            power[dp:end] += drift_curve[:actual_len] * power[dp:end]
 
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
+        df = pd.DataFrame({
+            'timestamp': timestamps,
+            'temperature_c': temperature,
+            'power_kw': power,
+            'pue': pue,
+            'humidity_percent': humidity,
+            'rack_utilization': rack_util,
+            'anomaly': anomaly
+        })
 
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
+        print(f"\n✓ Dataset generated")
+        print(f"  Shape: {df.shape}")
+        print(f"  Anomalies: {anomaly.sum():,} ({anomaly.mean():.2%})")
 
-# SageMath parsed files
-*.sage.py
+        return df
 
-# Environments
-.env
-.envrc
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+    def _inject_anomalies(self, data: np.ndarray, ratio: float) -> Tuple[np.ndarray, np.ndarray]:
+        """Inject point and collective anomalies"""
+        n = len(data)
+        labels = np.zeros(n)
 
-# Spyder project settings
-.spyderproject
-.spyproject
+        # Point anomalies
+        n_point = int(n * ratio * 0.7)
+        if n_point > 0:
+            indices = np.random.choice(n, n_point, replace=False)
+            data[indices] *= np.random.uniform(2.5, 5.0, n_point)
+            labels[indices] = 1
 
-# Rope project settings
-.ropeproject
+        # Collective anomalies
+        n_collective = int(n * ratio * 0.3)
+        if n_collective > 0:
+            for _ in range(max(1, n_collective // 50)):
+                start = np.random.randint(0, n - 50)
+                end = start + np.random.randint(20, 50)
+                data[start:end] *= np.random.uniform(1.8, 3.0)
+                labels[start:end] = 1
 
-# mkdocs documentation
-/site
+        return data, labels
 
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
+print("✓ DataCenterDataGenerator class loaded")
 
-# Pyre type checker
-.pyre/
+# ============================================================================
+# PART 2: MODEL TRAINING
+# ============================================================================
 
-# pytype static type analyzer
-.pytype/
+class DataCenterMonitoringModel:
+    """Train and manage the anomaly detection model"""
 
-# Cython debug symbols
-cython_debug/
+    def __init__(self):
+        self.model = None
+        self.scaler = StandardScaler()
+        self.feature_names = []
 
-# PyCharm
-#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#  and can be added to the global gitignore or merged into this file.  For a more nuclear
-#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
-#.idea/
+    def engineer_features(self, df: pd.DataFrame, fit: bool = False) -> np.ndarray:
+        """Engineer features from raw data"""
+        features = []
+        base_cols = ['temperature_c', 'power_kw', 'pue', 'humidity_percent', 'rack_utilization']
 
-# Abstra
-# Abstra is an AI-powered process automation framework.
-# Ignore directories containing user credentials, local state, and settings.
-# Learn more at https://abstra.io/docs
-.abstra/
+        # Current values
+        for col in base_cols:
+            features.append(df[col].values)
 
-# Visual Studio Code
-#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
-#  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#  and can be added to the global gitignore or merged into this file. However, if you prefer, 
-#  you could uncomment the following to ignore the entire vscode folder
-# .vscode/
+        # Rolling averages (3-period)
+        for col in base_cols:
+            features.append(df[col].rolling(3, min_periods=1).mean().values)
 
-# Ruff stuff:
-.ruff_cache/
+        # Derivatives (rate of change)
+        for col in base_cols:
+            features.append(df[col].diff().fillna(0).values)
 
-# PyPI configuration file
-.pypirc
+        X = np.column_stack(features)
 
-# Cursor
-#  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
-#  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
-#  refer to https://docs.cursor.com/context/ignore-files
-.cursorignore
-.cursorindexingignore
+        if fit:
+            X = self.scaler.fit_transform(X)
+            # Generate feature names
+            self.feature_names = []
+            for col in base_cols:
+                self.feature_names.append(f'{col}_current')
+            for col in base_cols:
+                self.feature_names.append(f'{col}_ma3')
+            for col in base_cols:
+                self.feature_names.append(f'{col}_derivative')
+        else:
+            X = self.scaler.transform(X)
 
-# Marimo
-marimo/_static/
-marimo/_lsp/
-__marimo__/
+        return X
+
+    def train(self, train_df: pd.DataFrame) -> Dict:
+        """Train the anomaly detection model"""
+        print(f"\n{'='*80}")
+        print(f"TRAINING ANOMALY DETECTION MODEL")
+        print(f"{'='*80}")
+
+        X_train = self.engineer_features(train_df, fit=True)
+        y_train = train_df['anomaly'].values
+
+        print(f"Training samples: {len(X_train):,}")
+        print(f"Features: {len(self.feature_names)}")
+        print(f"Anomaly rate: {y_train.mean():.2%}")
+
+        self.model = RandomForestClassifier(
+            n_estimators=100,
+            max_depth=10,
+            random_state=42,
+            n_jobs=-1,
+            class_weight='balanced'
+        )
+
+        self.model.fit(X_train, y_train)
+
+        # Evaluate on training data
+        y_pred = self.model.predict(X_train)
+        train_auc = roc_auc_score(y_train, self.model.predict_proba(X_train)[:, 1])
+
+        print(f"\n✓ Model trained")
+        print(f"  Training AUC: {train_auc:.3f}")
+
+        return {
+            'train_auc': train_auc,
+            'n_features': len(self.feature_names)
+        }
+
+    def evaluate(self, test_df: pd.DataFrame) -> Dict:
+        """Evaluate model on test data"""
+        X_test = self.engineer_features(test_df)
+        y_test = test_df['anomaly'].values
+
+        y_pred = self.model.predict(X_test)
+        y_proba = self.model.predict_proba(X_test)[:, 1]
+
+        test_auc = roc_auc_score(y_test, y_proba)
+
+        print(f"\n{'='*80}")
+        print(f"MODEL EVALUATION")
+        print(f"{'='*80}")
+        print(classification_report(y_test, y_pred))
+        print(f"Test AUC: {test_auc:.3f}")
+
+        return {
+            'test_auc': test_auc,
+            'y_true': y_test,
+            'y_pred': y_pred,
+            'y_proba': y_proba
+        }
+
+print("✓ DataCenterMonitoringModel class loaded")
+
+# ============================================================================
+# PART 3: BASELINE SHAP - FIXED VERSION
+# ============================================================================
+
+class BaselineSHAP:
+    """Standard batch SHAP for comparison"""
+
+    def __init__(self, model, feature_names: List[str]):
+        self.model = model
+        self.feature_names = feature_names
+        self.explainer = shap.TreeExplainer(model)
+
+        # Metrics
+        self.computation_times = []
+        self.shap_values_history = []
+
+    def explain_stream(self, X: np.ndarray, show_progress: bool = True) -> np.ndarray:
+        """Process data point-by-point (simulating streaming)"""
+
+        print(f"\n{'='*80}")
+        print(f"RUNNING BASELINE SHAP (BATCH PROCESSING)")
+        print(f"{'='*80}")
+        print(f"Processing {len(X):,} samples individually...")
+
+        shap_values_all = []
+
+        for i in range(len(X)):
+            start_time = time.time()
+
+            # Compute SHAP for single sample
+            shap_vals = self.explainer.shap_values(X[i:i+1])
+
+            # FIXED: For binary classification, take positive class (index 1)
+            if isinstance(shap_vals, list):
+                shap_vals = shap_vals[1]  # Take positive class
+            elif len(shap_vals.shape) == 3:  # Shape: (1, n_features, 2)
+                shap_vals = shap_vals[:, :, 1]  # Take positive class
+
+            comp_time = time.time() - start_time
+            self.computation_times.append(comp_time)
+
+            # Ensure we append a 1D array
+            if len(shap_vals.shape) == 2:
+                shap_vals = shap_vals[0]  # Take first sample if batched
+
+            shap_values_all.append(shap_vals)
+            self.shap_values_history.append(shap_vals)
+
+            if show_progress and (i + 1) % 500 == 0:
+                avg_time = np.mean(self.computation_times[-500:]) * 1000
+                print(f"  Processed {i+1:,}/{len(X):,} | Avg latency: {avg_time:.2f}ms")
+
+        print(f"\n✓ Baseline SHAP complete")
+
+        result = np.array(shap_values_all)
+        print(f"  Output shape: {result.shape}")  # Debug info
+
+        return result
+
+    def get_metrics(self) -> Dict:
+        """Get performance metrics"""
+        times_ms = np.array(self.computation_times) * 1000
+
+        return {
+            'mean_latency_ms': np.mean(times_ms),
+            'median_latency_ms': np.median(times_ms),
+            'std_latency_ms': np.std(times_ms),
+            'p95_latency_ms': np.percentile(times_ms, 95),
+            'p99_latency_ms': np.percentile(times_ms, 99),
+            'min_latency_ms': np.min(times_ms),
+            'max_latency_ms': np.max(times_ms),
+            'total_samples': len(self.computation_times)
+        }
+
+print("✓ BaselineSHAP class loaded (FIXED)")
+
+# ============================================================================
+# PART 4: SHAP-ON-STREAM
+# ============================================================================
+
+class DriftDetector:
+    """KS-test based drift detector"""
+
+    def __init__(self, window_size: int = 100, sensitivity: float = 0.05):
+        self.window_size = window_size
+        self.sensitivity = sensitivity
+        self.reference = deque(maxlen=window_size)
+        self.current = deque(maxlen=window_size)
+
+    def update(self, value: float) -> bool:
+        """Update and check for drift"""
+        self.current.append(value)
+
+        if len(self.current) < self.window_size // 2:
+            return False
+
+        if len(self.reference) >= self.window_size // 2:
+            _, p_value = ks_2samp(list(self.reference), list(self.current))
+
+            if p_value < self.sensitivity:
+                self.reference = deque(self.current, maxlen=self.window_size)
+                self.current.clear()
+                return True
+        else:
+            self.reference.append(value)
+
+        return False
+
+
+class SHAPOnStream:
+    """SHAP-on-Stream: Real-time explainability"""
+
+    def __init__(
+        self,
+        model,
+        feature_names: List[str],
+        window_size: int = 100,
+        alpha_high: float = 0.7,
+        alpha_low: float = 0.3,
+        drift_sensitivity: float = 0.05,
+        feature_sample_ratio: float = 0.7
+    ):
+        self.model = model
+        self.feature_names = feature_names
+        self.n_features = len(feature_names)
+        self.window_size = window_size
+        self.alpha_high = alpha_high
+        self.alpha_low = alpha_low
+        self.alpha = alpha_high
+        self.feature_sample_ratio = feature_sample_ratio
+
+        # State
+        self.window = deque(maxlen=window_size)
+        self.phi = np.zeros(self.n_features)
+
+        # Drift detection
+        self.drift_detectors = [
+            DriftDetector(window_size, drift_sensitivity)
+            for _ in range(self.n_features)
+        ]
+
+        # Metrics
+        self.explanation_history = []
+        self.drift_history = []
+        self.stability_scores = []
+        self.computation_times = []
+        self.alpha_history = []
+
+    def update(self, x: np.ndarray) -> Dict:
+        """Process new sample"""
+        start_time = time.time()
+
+        self.window.append(x)
+
+        # Detect drift
+        drift_detected = self._detect_drift(x)
+        self.drift_history.append(drift_detected)
+
+        if drift_detected:
+            self.alpha = self.alpha_low
+        else:
+            self.alpha = self.alpha_high
+
+        self.alpha_history.append(self.alpha)
+
+        # Select features
+        selected_features = self._select_features()
+
+        # Compute approximation
+        delta_phi = self._compute_approximation(x, selected_features)
+
+        # Incremental update
+        self.phi = self.alpha * self.phi + (1 - self.alpha) * delta_phi
+
+        # Metrics
+        comp_time = time.time() - start_time
+        self.computation_times.append(comp_time)
+
+        # Stability
+        if len(self.explanation_history) > 0:
+            prev = self.explanation_history[-1]
+            stability = 1 - np.linalg.norm(self.phi - prev) / (np.linalg.norm(self.phi) + 1e-10)
+        else:
+            stability = 1.0
+
+        self.stability_scores.append(stability)
+        self.explanation_history.append(self.phi.copy())
+
+        return {
+            'shap_values': self.phi.copy(),
+            'drift_detected': drift_detected,
+            'alpha': self.alpha,
+            'stability': stability,
+            'comp_time_ms': comp_time * 1000,
+            'selected_features': selected_features
+        }
+
+    def _detect_drift(self, x: np.ndarray) -> bool:
+        drift_count = sum(detector.update(x[i]) for i, detector in enumerate(self.drift_detectors))
+        return (drift_count / self.n_features) > 0.2
+
+    def _select_features(self) -> np.ndarray:
+        n_select = max(3, int(self.n_features * self.feature_sample_ratio))
+        importance = np.abs(self.phi)
+        return np.argsort(importance)[-n_select:]
+
+    def _compute_approximation(self, x: np.ndarray, selected: np.ndarray) -> np.ndarray:
+        delta = np.zeros(self.n_features)
+
+        if len(self.window) < 5:
+            return delta
+
+        W = np.array(self.window)
+
+        for i in selected:
+            x_plus = x.copy()
+            x_minus = x.copy()
+            x_minus[i] = W[:, i].mean()
+
+            f_plus = self.model.predict_proba(x_plus.reshape(1, -1))[0, 1]
+            f_minus = self.model.predict_proba(x_minus.reshape(1, -1))[0, 1]
+
+            delta[i] = f_plus - f_minus
+
+        return delta
+
+    def get_metrics(self) -> Dict:
+        times_ms = np.array(self.computation_times) * 1000
+
+        return {
+            'mean_latency_ms': np.mean(times_ms),
+            'median_latency_ms': np.median(times_ms),
+            'std_latency_ms': np.std(times_ms),
+            'p95_latency_ms': np.percentile(times_ms, 95),
+            'p99_latency_ms': np.percentile(times_ms, 99),
+            'min_latency_ms': np.min(times_ms),
+            'max_latency_ms': np.max(times_ms),
+            'mean_stability': np.mean(self.stability_scores),
+            'std_stability': np.std(self.stability_scores),
+            'drift_frequency': np.mean(self.drift_history),
+            'total_samples': len(self.explanation_history)
+        }
+
+print("✓ SHAPOnStream class loaded")
+
+# ============================================================================
+# PART 5: COMPARISON UTILITIES - FIXED VERSION
+# ============================================================================
+
+class PerformanceComparison:
+    """Compare Baseline SHAP vs SHAP-on-Stream"""
+
+    @staticmethod
+    def compute_fidelity(baseline_shap: np.ndarray, stream_shap: np.ndarray) -> Dict:
+        """Measure approximation quality"""
+
+        # FIXED: Ensure shapes match
+        print(f"\nShape check:")
+        print(f"  Baseline SHAP: {baseline_shap.shape}")
+        print(f"  Stream SHAP: {stream_shap.shape}")
+
+        # If baseline has extra dimensions, squeeze them
+        if len(baseline_shap.shape) == 3:
+            print(f"  Squeezing baseline SHAP...")
+            baseline_shap = baseline_shap[:, :, 0] if baseline_shap.shape[2] == 2 else baseline_shap.squeeze()
+
+        # Final check
+        assert baseline_shap.shape == stream_shap.shape, \
+            f"Shape mismatch: {baseline_shap.shape} vs {stream_shap.shape}"
+
+        print(f"  ✓ Shapes matched: {baseline_shap.shape}")
+
+        mse = np.mean((baseline_shap - stream_shap) ** 2)
+
+        # Rank correlation
+        correlations = []
+        for i in range(len(baseline_shap)):
+            corr, _ = spearmanr(baseline_shap[i], stream_shap[i])
+            if not np.isnan(corr):
+                correlations.append(corr)
+
+        # Top-5 overlap
+        k = 5
+        overlaps = []
+        for i in range(len(baseline_shap)):
+            base_top = set(np.argsort(np.abs(baseline_shap[i]))[-k:])
+            stream_top = set(np.argsort(np.abs(stream_shap[i]))[-k:])
+            overlap = len(base_top & stream_top) / k
+            overlaps.append(overlap)
+
+        return {
+            'mse': mse,
+            'mean_rank_correlation': np.mean(correlations),
+            'mean_top5_overlap': np.mean(overlaps),
+            'fidelity_score': 1 / (1 + mse)
+        }
+
+    @staticmethod
+    def compute_mttr_improvement(
+        baseline_latencies: np.ndarray,
+        stream_latencies: np.ndarray
+    ) -> Dict:
+        """Estimate MTTR improvement"""
+        baseline_mttr = np.mean(baseline_latencies) * 100
+        stream_mttr = np.mean(stream_latencies) * 100
+
+        improvement = (baseline_mttr - stream_mttr) / baseline_mttr * 100
+
+        return {
+            'baseline_mttr_seconds': baseline_mttr,
+            'stream_mttr_seconds': stream_mttr,
+            'mttr_improvement_percent': improvement
+        }
+
+    @staticmethod
+    def generate_comparison_report(
+        baseline_metrics: Dict,
+        stream_metrics: Dict,
+        fidelity_metrics: Dict,
+        mttr_metrics: Dict
+    ) -> pd.DataFrame:
+        """Generate comparison report"""
+
+        # Calculate improvements
+        latency_imp = (baseline_metrics['mean_latency_ms'] - stream_metrics['mean_latency_ms']) / baseline_metrics['mean_latency_ms'] * 100
+        p95_imp = (baseline_metrics['p95_latency_ms'] - stream_metrics['p95_latency_ms']) / baseline_metrics['p95_latency_ms'] * 100
+        p99_imp = (baseline_metrics['p99_latency_ms'] - stream_metrics['p99_latency_ms']) / baseline_metrics['p99_latency_ms'] * 100
+
+        report = {
+            'Metric': [
+                'Mean Latency (ms)',
+                'P95 Latency (ms)',
+                'P99 Latency (ms)',
+                'Explanation Stability',
+                'MTTR (seconds)',
+                'Fidelity Score',
+                'Top-5 Overlap'
+            ],
+            'Baseline SHAP': [
+                f"{baseline_metrics['mean_latency_ms']:.2f}",
+                f"{baseline_metrics['p95_latency_ms']:.2f}",
+                f"{baseline_metrics['p99_latency_ms']:.2f}",
+                'N/A',
+                f"{mttr_metrics['baseline_mttr_seconds']:.2f}",
+                '1.00',
+                '1.00'
+            ],
+            'SHAP-on-Stream': [
+                f"{stream_metrics['mean_latency_ms']:.2f}",
+                f"{stream_metrics['p95_latency_ms']:.2f}",
+                f"{stream_metrics['p99_latency_ms']:.2f}",
+                f"{stream_metrics['mean_stability']:.3f}",
+                f"{mttr_metrics['stream_mttr_seconds']:.2f}",
+                f"{fidelity_metrics['fidelity_score']:.3f}",
+                f"{fidelity_metrics['mean_top5_overlap']:.3f}"
+            ],
+            'Improvement': [
+                f"↓ {latency_imp:.1f}%",
+                f"↓ {p95_imp:.1f}%",
+                f"↓ {p99_imp:.1f}%",
+                f"{stream_metrics['mean_stability']:.3f}",
+                f"↓ {mttr_metrics['mttr_improvement_percent']:.1f}%",
+                f"{(1-fidelity_metrics['fidelity_score'])*100:.1f}% approx",
+                f"{fidelity_metrics['mean_top5_overlap']*100:.1f}% match"
+            ]
+        }
+
+        return pd.DataFrame(report)
+
+print("✓ PerformanceComparison class loaded (FIXED)")
+
+# ============================================================================
+# MAIN EXECUTION - RUN THIS CELL TO START
+# ============================================================================
+
+def run_complete_comparison():
+    """Run complete comparison"""
+
+    print("\n" + "="*80)
+    print(" SHAP-ON-STREAM VS BASELINE SHAP")
+    print(" Data Center Power & Temperature Monitoring")
+    print("="*80)
+
+    # 1. Generate data
+    generator = DataCenterDataGenerator(seed=42)
+    df = generator.generate(n_samples=5000, anomaly_ratio=0.05, drift_points=[1500, 3500])
+
+    # Train/test split
+    train_size = int(0.7 * len(df))
+    train_df = df.iloc[:train_size].copy()
+    test_df = df.iloc[train_size:].copy()
+
+    print(f"\nTrain: {len(train_df):,} | Test: {len(test_df):,}")
+
+    # 2. Train model
+    model_trainer = DataCenterMonitoringModel()
+    model_trainer.train(train_df)
+    eval_results = model_trainer.evaluate(test_df)
+
+    X_test = model_trainer.engineer_features(test_df)
+    y_test = test_df['anomaly'].values
+
+    # 3. Run Baseline SHAP
+    baseline = BaselineSHAP(model_trainer.model, model_trainer.feature_names)
+    baseline_shap_values = baseline.explain_stream(X_test, show_progress=True)
+    baseline_metrics = baseline.get_metrics()
+
+    print(f"\nBaseline: {baseline_metrics['mean_latency_ms']:.2f}ms avg")
+
+    # 4. Run SHAP-on-Stream
+    print(f"\n{'='*80}")
+    print(f"RUNNING SHAP-ON-STREAM")
+    print(f"{'='*80}")
+
+    stream = SHAPOnStream(
+        model=model_trainer.model,
+        feature_names=model_trainer.feature_names,
+        window_size=100,
+        alpha_high=0.7,
+        alpha_low=0.3
+    )
+
+    stream_shap_values = []
+    for i in range(len(X_test)):
+        result = stream.update(X_test[i])
+        stream_shap_values.append(result['shap_values'])
+
+        if (i + 1) % 500 == 0:
+            avg_time = np.mean(stream.computation_times[-500:]) * 1000
+            print(f"  Processed {i+1:,}/{len(X_test):,} | Avg: {avg_time:.2f}ms")
+
+    stream_shap_values = np.array(stream_shap_values)
+    stream_metrics = stream.get_metrics()
+
+    print(f"\n✓ Stream: {stream_metrics['mean_latency_ms']:.2f}ms avg")
+
+    # 5. Compute comparisons
+    fidelity = PerformanceComparison.compute_fidelity(baseline_shap_values, stream_shap_values)
+    mttr = PerformanceComparison.compute_mttr_improvement(
+        np.array(baseline.computation_times),
+        np.array(stream.computation_times)
+    )
+
+    # 6. Generate report
+    print(f"\n{'='*80}")
+    print(f"COMPARISON REPORT")
+    print(f"{'='*80}\n")
+
+    report = PerformanceComparison.generate_comparison_report(
+        baseline_metrics, stream_metrics, fidelity, mttr
+    )
+
+    print(report.to_string(index=False))
+
+    # 7. Summary
+    print(f"\n{'='*80}")
+    print(f"KEY IMPROVEMENTS")
+    print(f"{'='*80}")
+
+    latency_imp = (baseline_metrics['mean_latency_ms'] - stream_metrics['mean_latency_ms']) / baseline_metrics['mean_latency_ms'] * 100
+
+    print(f"\n🚀 Latency:   {baseline_metrics['mean_latency_ms']:.1f}ms → {stream_metrics['mean_latency_ms']:.1f}ms ({latency_imp:.1f}% faster)")
+    print(f"📊 MTTR:      {mttr['baseline_mttr_seconds']:.1f}s → {mttr['stream_mttr_seconds']:.1f}s ({mttr['mttr_improvement_percent']:.1f}% reduction)")
+    print(f"✓ Stability:  {stream_metrics['mean_stability']:.3f}")
+    print(f"✓ Fidelity:   {fidelity['fidelity_score']:.3f}")
+
+    return baseline, stream, report
+
+# RUN THE COMPARISON
+baseline, stream, report = run_complete_comparison()
